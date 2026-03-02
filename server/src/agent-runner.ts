@@ -16,7 +16,7 @@ interface RunOptions {
 }
 
 const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 1500;
+const BASE_DELAY_MS = 2000;
 
 /** Errors that should NOT be retried (auth, config, user abort). */
 function isNonRetryable(err: Error): boolean {
@@ -53,11 +53,81 @@ function buildSDKEnv(): Record<string, string> {
   return env;
 }
 
+/** Create a query using simple string prompt (most reliable). */
+function createSimpleQuery(text: string, model: string, sdkSessionId: string, cwd: string): Query {
+  return query({
+    prompt: text,
+    options: {
+      model,
+      sessionId: sdkSessionId,
+      cwd,
+      allowedTools: [
+        "Read", "Write", "Edit", "Bash", "Grep", "Glob",
+        "WebSearch", "WebFetch", "Agent", "NotebookEdit",
+      ],
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      includePartialMessages: true,
+      maxTurns: 50,
+      env: buildSDKEnv(),
+    },
+  });
+}
+
+/** Create a query using AsyncIterable streaming input (richer streaming). */
+function createStreamingQuery(text: string, model: string, sdkSessionId: string, cwd: string): Query {
+  const inputStream = (async function* () {
+    yield {
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      session_id: sdkSessionId,
+    } as SDKUserMessage;
+  })();
+
+  return query({
+    prompt: inputStream,
+    options: {
+      model,
+      sessionId: sdkSessionId,
+      cwd,
+      allowedTools: [
+        "Read", "Write", "Edit", "Bash", "Grep", "Glob",
+        "WebSearch", "WebFetch", "Agent", "NotebookEdit",
+      ],
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      includePartialMessages: true,
+      maxTurns: 50,
+      env: buildSDKEnv(),
+    },
+  });
+}
+
 export class AgentRunner {
   private running = new Map<string, RunningSession>();
+  /** Map webclaude sessionId -> SDK sessionId (may rotate on retry) */
+  private sdkSessionIds = new Map<string, string>();
 
   isRunning(sessionId: string): boolean {
     return this.running.has(sessionId);
+  }
+
+  /** Get or create a stable SDK sessionId for a webclaude session. */
+  private getSDKSessionId(sessionId: string): string {
+    let sdkId = this.sdkSessionIds.get(sessionId);
+    if (!sdkId) {
+      sdkId = sessionId;
+      this.sdkSessionIds.set(sessionId, sdkId);
+    }
+    return sdkId;
+  }
+
+  /** Rotate to a fresh SDK sessionId (used on retry after crash). */
+  private rotateSDKSessionId(sessionId: string): string {
+    const freshId = crypto.randomUUID();
+    this.sdkSessionIds.set(sessionId, freshId);
+    return freshId;
   }
 
   async run(sessionId: string, text: string, options: RunOptions): Promise<void> {
@@ -80,37 +150,20 @@ export class AgentRunner {
         await new Promise((r) => setTimeout(r, delay));
       }
 
-      console.log(`[AgentRunner] run session=${sessionId} model=${options.model} attempt=${attempt + 1}/${MAX_RETRIES + 1}`);
+      // On first attempt: use original SDK sessionId + streaming mode
+      // On retry: rotate to fresh SDK sessionId + simple string mode
+      const sdkSessionId = attempt === 0
+        ? this.getSDKSessionId(sessionId)
+        : this.rotateSDKSessionId(sessionId);
 
-      // Use streaming input mode (AsyncIterable) to get real-time stream_event deltas
-      const inputStream = (async function* () {
-        yield {
-          type: "user",
-          message: { role: "user", content: text },
-          parent_tool_use_id: null,
-          session_id: sessionId,
-        } as SDKUserMessage;
-      })();
+      const mode = attempt === 0 ? "streaming" : "simple";
+      console.log(`[AgentRunner] run session=${sessionId} sdk=${sdkSessionId.slice(0, 8)}... model=${options.model} attempt=${attempt + 1}/${MAX_RETRIES + 1} mode=${mode}`);
 
       let q: Query;
       try {
-        q = query({
-          prompt: inputStream,
-          options: {
-            model: options.model,
-            sessionId,
-            cwd: options.cwd,
-            allowedTools: [
-              "Read", "Write", "Edit", "Bash", "Grep", "Glob",
-              "WebSearch", "WebFetch", "Agent", "NotebookEdit",
-            ],
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
-            includePartialMessages: true,
-            maxTurns: 50,
-            env: buildSDKEnv(),
-          },
-        });
+        q = mode === "streaming"
+          ? createStreamingQuery(text, options.model, sdkSessionId, options.cwd)
+          : createSimpleQuery(text, options.model, sdkSessionId, options.cwd);
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         console.error(`[AgentRunner] Failed to create query (attempt ${attempt + 1}):`, error.message);
@@ -148,7 +201,8 @@ export class AgentRunner {
         return;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        console.error(`[AgentRunner] Error (attempt ${attempt + 1}):`, error.message);
+        const detail = `${error.message}${error.stack ? `\n${error.stack.split("\n").slice(1, 3).join("\n")}` : ""}`;
+        console.error(`[AgentRunner] Error (attempt ${attempt + 1}):`, detail);
 
         if (isNonRetryable(error)) {
           if (error.name === "AbortError") {
@@ -160,7 +214,10 @@ export class AgentRunner {
         }
 
         if (attempt >= MAX_RETRIES) {
-          options.onError(error, false);
+          options.onError(
+            new Error(`Failed after ${MAX_RETRIES + 1} attempts. Last error: ${error.message}`),
+            false,
+          );
           return;
         }
 

@@ -79,7 +79,7 @@ function createStreamingQuery(text: string, model: string, sdkSessionId: string,
   const inputStream = (async function* () {
     yield {
       type: "user",
-      message: { role: "user", content: text },
+      message: text,
       parent_tool_use_id: null,
       session_id: sdkSessionId,
     } as SDKUserMessage;
@@ -181,6 +181,10 @@ export class AgentRunner {
       try {
         let gotResult = false;
         for await (const msg of q) {
+          // Log message types in streaming mode
+          if (mode === "streaming") {
+            console.log(`[AgentRunner] SDK msg:`, msg.type, msg.type === "stream_event" ? (msg as { event?: { type?: string } }).event?.type : "");
+          }
           options.onEvent(msg);
 
           if (msg.type === "result") {

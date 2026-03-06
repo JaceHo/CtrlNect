@@ -3,6 +3,7 @@ import type { SessionStore } from "../session-store.js";
 import type { AgentRunner } from "../agent-runner.js";
 import type { ConnectionManager } from "../connection-manager.js";
 import type { MessageStore } from "../message-store.js";
+import type { FeishuBridge } from "../feishu/feishu-bridge.js";
 import type { CreateSessionRequest, UpdateSessionRequest } from "@webclaude/shared";
 import { AVAILABLE_MODELS } from "@webclaude/shared";
 
@@ -11,6 +12,7 @@ export function createApiRoutes(
   agentRunner: AgentRunner,
   connectionManager: ConnectionManager,
   messageStore: MessageStore,
+  feishuBridge: FeishuBridge | null = null,
 ) {
   const api = new Hono();
 
@@ -73,6 +75,41 @@ export function createApiRoutes(
   // List available models
   api.get("/models", (c) => {
     return c.json(AVAILABLE_MODELS);
+  });
+
+  // ── Feishu integration routes ───────────────────────────────────────────────
+
+  /** GET /api/feishu/status – returns bridge status or disabled notice. */
+  api.get("/feishu/status", (c) => {
+    if (!feishuBridge) {
+      return c.json({
+        enabled: false,
+        message:
+          'Feishu integration disabled. Set enabled=true in ~/.openclaw/config.json',
+      });
+    }
+    return c.json(feishuBridge.getStatus());
+  });
+
+  /** POST /api/feishu/send – manually send a message to a Feishu DM session.
+   *  Body: { sessionId: string, text: string }
+   */
+  api.post("/feishu/send", async (c) => {
+    if (!feishuBridge) {
+      return c.json({ error: "Feishu integration not enabled" }, 503);
+    }
+    const { sessionId, text } = (await c.req.json()) as {
+      sessionId: string;
+      text: string;
+    };
+    if (!sessionId || !text) {
+      return c.json({ error: "sessionId and text are required" }, 400);
+    }
+    if (!feishuBridge.isFeishuSession(sessionId)) {
+      return c.json({ error: "Not a Feishu session" }, 404);
+    }
+    await feishuBridge.forwardReplyToFeishu(sessionId, text);
+    return c.json({ ok: true });
   });
 
   return api;

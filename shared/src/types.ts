@@ -4,7 +4,7 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; toolUseId: string; content: string; isError?: boolean }
+  | { type: "tool_result"; toolUseId: string; content: string; isError?: boolean; toolName?: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
 export interface PersistedMessage {
@@ -58,12 +58,55 @@ export interface CostInfo {
   outputTokens: number;
 }
 
+// --- Cron job types ---
+
+export interface CronJob {
+  id: string;
+  sessionId: string;
+  name: string;
+  schedule: string;
+  prompt: string;
+  enabled: boolean;
+  status: "idle" | "running" | "error";
+  lastRun: string | null;
+  nextRun: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface CronRunLog {
+  id: string;
+  cronId: string;
+  status: "success" | "error" | "running";
+  startedAt: string;
+  endedAt: string | null;
+  error: string | null;
+  trigger: "schedule" | "manual";
+}
+
+export interface CreateCronRequest {
+  sessionId: string;
+  name: string;
+  schedule: string;
+  prompt: string;
+  enabled?: boolean;
+}
+
+export interface UpdateCronRequest {
+  sessionId?: string;
+  name?: string;
+  schedule?: string;
+  prompt?: string;
+  enabled?: boolean;
+}
+
 // WebSocket protocol - Client to Server
 export type ClientMessage =
   | { type: "chat"; sessionId: string; text: string; images?: ImageData[] }
   | { type: "interrupt"; sessionId: string }
   | { type: "subscribe"; sessionId: string }
-  | { type: "unsubscribe"; sessionId: string };
+  | { type: "unsubscribe"; sessionId: string }
+  | { type: "cron_trigger"; cronId: string };
 
 // WebSocket protocol - Server to Client
 export type ServerMessage =
@@ -71,7 +114,9 @@ export type ServerMessage =
   | { type: "session_update"; session: Session }
   | { type: "stream_start"; sessionId: string }
   | { type: "stream_end"; sessionId: string; cost?: CostInfo }
-  | { type: "error"; sessionId: string; message: string };
+  | { type: "error"; sessionId: string; message: string }
+  | { type: "cron_update"; cron: CronJob }
+  | { type: "cron_list"; crons: CronJob[] };
 
 // REST API types
 export interface CreateSessionRequest {

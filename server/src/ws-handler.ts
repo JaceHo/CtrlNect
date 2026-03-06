@@ -54,8 +54,21 @@ export class WSHandler {
       case "chat":
         this.handleChat(msg.sessionId, msg.text, msg.images);
         break;
+
+      case "cron_trigger":
+        if (this.cronTriggerHandler) {
+          this.cronTriggerHandler(msg.cronId);
+        }
+        break;
     }
   }
+
+  /** Set external handler for cron_trigger messages. */
+  setCronTriggerHandler(handler: (cronId: string) => void) {
+    this.cronTriggerHandler = handler;
+  }
+
+  private cronTriggerHandler: ((cronId: string) => void) | null = null;
 
   private async handleInterrupt(sessionId: string) {
     await this.agentRunner.interrupt(sessionId);
@@ -73,7 +86,7 @@ export class WSHandler {
     });
   }
 
-  private async handleChat(
+  async handleChat(
     sessionId: string,
     text: string,
     _images?: { base64: string; mediaType: string }[],
@@ -110,6 +123,79 @@ export class WSHandler {
       type: "stream_start",
       sessionId,
     });
+
+    // Shell command support: !command
+    if (text.startsWith("!")) {
+      const cmd = text.slice(1).trim();
+      console.log(`[WS] Running shell command: ${cmd}`);
+
+      try {
+        const { spawn } = await import("child_process");
+        const result = await new Promise<string>((resolve, reject) => {
+          const proc = spawn("sh", ["-c", cmd], {
+            cwd: session.cwd,
+            env: process.env,
+          });
+          let stdout = "";
+          let stderr = "";
+          proc.stdout?.on("data", (data) => { stdout += data; });
+          proc.stderr?.on("data", (data) => { stderr += data; });
+          proc.on("close", (code) => {
+            resolve(stdout + (stderr ? `\n[stderr]\n${stderr}` : ""));
+          });
+          proc.on("error", reject);
+          setTimeout(() => {
+            proc.kill();
+            resolve("[timeout - process killed]");
+          }, 30000);
+        });
+
+        // Send result as tool_result block for proper chat UI display
+        const outputText = result || "(empty output)";
+        const toolUseId = crypto.randomUUID();
+        const outputMsg: PersistedMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          blocks: [
+            { type: "tool_use", id: toolUseId, name: "shell", input: { command: cmd } },
+            { type: "tool_result", toolUseId, content: outputText, isError: false },
+          ],
+          parentToolUseId: null,
+          timestamp: new Date().toISOString(),
+        };
+        this.messageStore.append(sessionId, outputMsg);
+
+        this.connectionManager.broadcast(sessionId, {
+          type: "agent_event",
+          sessionId,
+          event: {
+            type: "assistant",
+            uuid: outputMsg.id,
+            message: {
+              content: [
+                { type: "tool_use", id: toolUseId, name: "shell", input: { command: cmd } },
+                { type: "tool_result", tool_use_id: toolUseId, content: outputText, is_error: false },
+              ],
+            },
+          },
+        });
+
+        // End stream
+        this.connectionManager.broadcast(sessionId, {
+          type: "stream_end",
+          sessionId,
+        });
+        this.sessionStore.updateStatus(sessionId, "idle");
+        return;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.connectionManager.broadcast(sessionId, {
+          type: "error",
+          sessionId,
+          message: `Command failed: ${errMsg}`,
+        });
+      }
+    }
 
     // If this is a Feishu DM session we collect assistant text to forward back.
     const isFeishu = this.feishuBridge?.isFeishuSession(sessionId) ?? false;

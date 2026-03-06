@@ -26,6 +26,8 @@ interface SidebarProps {
   onRestartService: (id: string) => Promise<boolean>;
   onDeleteService: (id: string) => Promise<boolean>;
   onCreateService: (service: { name: string; description?: string; command: string; cwd?: string; logPath?: string }) => Promise<boolean>;
+  onUpdateService: (id: string, updates: { name?: string; description?: string; command?: string; cwd?: string; logPath?: string }) => Promise<boolean>;
+  onToggleServiceEnabled: (id: string, enabled: boolean) => Promise<boolean>;
   onGetServiceLogs: (id: string) => Promise<string>;
   onDiscoverServices: () => Promise<{ name: string; description: string; command: string; logPath?: string }[]>;
 }
@@ -49,6 +51,8 @@ export function Sidebar({
   onRestartService,
   onDeleteService,
   onCreateService,
+  onUpdateService,
+  onToggleServiceEnabled,
   onGetServiceLogs,
   onDiscoverServices,
 }: SidebarProps) {
@@ -88,6 +92,8 @@ export function Sidebar({
         onRestart={onRestartService}
         onDelete={onDeleteService}
         onCreate={onCreateService}
+        onUpdate={onUpdateService}
+        onToggleEnabled={onToggleServiceEnabled}
         onGetLogs={onGetServiceLogs}
         onDiscover={onDiscoverServices}
       />

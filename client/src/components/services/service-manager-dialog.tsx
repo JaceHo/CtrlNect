@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Play, Square, RotateCcw, Trash2, Terminal, FileText, Loader2, Plus, Search } from "lucide-react";
+import { X, Play, Square, RotateCcw, Trash2, Terminal, FileText, Loader2, Plus, Search, Edit2, ToggleLeft, ToggleRight } from "lucide-react";
 import type { SystemService, DiscoveredService } from "@/hooks/use-services";
 
 interface ServiceManagerDialogProps {
@@ -10,6 +10,8 @@ interface ServiceManagerDialogProps {
   onRestart: (id: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
   onCreate: (service: { name: string; description?: string; command: string; cwd?: string; logPath?: string }) => Promise<boolean>;
+  onUpdate: (id: string, updates: { name?: string; description?: string; command?: string; cwd?: string; logPath?: string }) => Promise<boolean>;
+  onToggleEnabled: (id: string, enabled: boolean) => Promise<boolean>;
   onGetLogs: (id: string) => Promise<string>;
   onDiscover: () => Promise<DiscoveredService[]>;
 }
@@ -22,6 +24,8 @@ export function ServiceManagerDialog({
   onRestart,
   onDelete,
   onCreate,
+  onUpdate,
+  onToggleEnabled,
   onGetLogs,
   onDiscover,
 }: ServiceManagerDialogProps) {
@@ -33,6 +37,10 @@ export function ServiceManagerDialog({
   const [showDiscover, setShowDiscover] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredService[]>([]);
   const [loadingDiscover, setLoadingDiscover] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", description: "", command: "", cwd: "", logPath: "" });
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const handleViewLogs = async (id: string) => {
     setLoadingLogs(true);
@@ -60,6 +68,44 @@ export function ServiceManagerDialog({
     await onCreate(newService);
     setNewService({ name: "", description: "", command: "", cwd: "", logPath: "" });
     setShowAdd(false);
+  };
+
+  const handleAction = async (id: string, action: () => Promise<boolean>) => {
+    setActionLoading(id);
+    await action();
+    setActionLoading(null);
+  };
+
+  const startEdit = (service: SystemService) => {
+    setEditingId(service.id);
+    setEditForm({
+      name: service.name,
+      description: service.description || "",
+      command: service.command,
+      cwd: service.cwd || "",
+      logPath: service.logPath || "",
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({ name: "", description: "", command: "", cwd: "", logPath: "" });
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || !editForm.name || !editForm.command) return;
+    await onUpdate(editingId, editForm);
+    cancelEdit();
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirmDelete !== id) {
+      setConfirmDelete(id);
+      setTimeout(() => setConfirmDelete(null), 3000);
+      return;
+    }
+    await handleAction(id, () => onDelete(id));
+    setConfirmDelete(null);
   };
 
   const getStatusColor = (status: SystemService["status"]) => {
@@ -105,37 +151,88 @@ export function ServiceManagerDialog({
             </div>
           ) : (
             services.map((service) => (
-              <div key={service.id} className={`flex items-center gap-3 p-3 rounded-lg ${getStatusBg(service.status)}`}>
-                <div className={`w-2 h-2 rounded-full ${service.status === "running" ? "bg-green-400" : service.status === "error" ? "bg-red-400" : "bg-text-muted"}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-text-primary">{service.name}</span>
-                    <span className={`text-xs ${getStatusColor(service.status)}`}>{service.status}</span>
-                    {service.pid && <span className="text-xs text-text-muted">PID: {service.pid}</span>}
+              <div key={service.id}>
+                {editingId === service.id ? (
+                  <div className="p-3 bg-bg-tertiary rounded-lg space-y-2">
+                    <input
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      placeholder="Service name"
+                      className="w-full px-3 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text-primary"
+                    />
+                    <input
+                      value={editForm.description}
+                      onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                      placeholder="Description (optional)"
+                      className="w-full px-3 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text-primary"
+                    />
+                    <input
+                      value={editForm.command}
+                      onChange={(e) => setEditForm({ ...editForm, command: e.target.value })}
+                      placeholder="Command to run"
+                      className="w-full px-3 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text-primary font-mono"
+                    />
+                    <input
+                      value={editForm.cwd}
+                      onChange={(e) => setEditForm({ ...editForm, cwd: e.target.value })}
+                      placeholder="Working directory (optional)"
+                      className="w-full px-3 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text-primary"
+                    />
+                    <input
+                      value={editForm.logPath}
+                      onChange={(e) => setEditForm({ ...editForm, logPath: e.target.value })}
+                      placeholder="Log file path (optional)"
+                      className="w-full px-3 py-2 bg-bg-secondary border border-border rounded-lg text"
+                    />
+                    <div className="flex gap--sm text-text-primary2">
+                      <button onClick={saveEdit} className="px-3 py-2 bg-accent text-bg-primary rounded-lg text-sm font-medium">Save</button>
+                      <button onClick={cancelEdit} className="px-3 py-2 bg-bg-tertiary text-text-muted rounded-lg text-sm">Cancel</button>
+                    </div>
                   </div>
-                  <p className="text-xs text-text-muted truncate">{service.description || service.command}</p>
-                  {service.lastError && <p className="text-xs text-red-400 truncate">Error: {service.lastError}</p>}
-                </div>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => handleViewLogs(service.id)} className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-tertiary" title="View Logs">
-                    <FileText size={14} />
-                  </button>
-                  {service.status === "running" ? (
-                    <button onClick={() => onStop(service.id)} className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-400/10" title="Stop">
-                      <Square size={14} />
+                ) : (
+                  <div className={`flex items-center gap-3 p-3 rounded-lg ${getStatusBg(service.status)} ${actionLoading === service.id ? "opacity-50" : ""} ${!service.enabled ? "opacity-50" : ""}`}>
+                    <button
+                      onClick={() => onToggleEnabled(service.id, !service.enabled)}
+                      className={`flex-shrink-0 ${service.enabled ? "text-green-400" : "text-text-muted"}`}
+                      title={service.enabled ? "Enabled - click to disable" : "Disabled - click to enable"}
+                    >
+                      {service.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
                     </button>
-                  ) : (
-                    <button onClick={() => onStart(service.id)} className="p-1.5 rounded-md text-text-muted hover:text-green-400 hover:bg-green-400/10" title="Start">
-                      <Play size={14} />
-                    </button>
-                  )}
-                  <button onClick={() => onRestart(service.id)} className="p-1.5 rounded-md text-text-muted hover:text-yellow-400 hover:bg-yellow-400/10" title="Restart">
-                    <RotateCcw size={14} />
-                  </button>
-                  <button onClick={() => onDelete(service.id)} className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-400/10" title="Delete">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                    <div className={`w-2 h-2 rounded-full ${service.status === "running" ? "bg-green-400" : service.status === "error" ? "bg-red-400" : "bg-text-muted"}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-text-primary">{service.name}</span>
+                        <span className={`text-xs ${getStatusColor(service.status)}`}>{service.status}</span>
+                        {service.pid && <span className="text-xs text-text-muted">PID: {service.pid}</span>}
+                      </div>
+                      <p className="text-xs text-text-muted truncate">{service.description || service.command}</p>
+                      {service.lastError && <p className="text-xs text-red-400 truncate">Error: {service.lastError}</p>}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => handleViewLogs(service.id)} className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-tertiary" title="View Logs">
+                        <FileText size={14} />
+                      </button>
+                      <button onClick={() => startEdit(service)} className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-tertiary" title="Edit">
+                        <Edit2 size={14} />
+                      </button>
+                      {service.status === "running" ? (
+                        <button onClick={() => handleAction(service.id, () => onStop(service.id))} disabled={actionLoading === service.id} className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-400/10 disabled:opacity-50" title="Stop">
+                          <Square size={14} />
+                        </button>
+                      ) : (
+                        <button onClick={() => handleAction(service.id, () => onStart(service.id))} disabled={actionLoading === service.id} className="p-1.5 rounded-md text-text-muted hover:text-green-400 hover:bg-green-400/10 disabled:opacity-50" title="Start">
+                          <Play size={14} />
+                        </button>
+                      )}
+                      <button onClick={() => handleAction(service.id, () => onRestart(service.id))} disabled={actionLoading === service.id} className="p-1.5 rounded-md text-text-muted hover:text-yellow-400 hover:bg-yellow-400/10 disabled:opacity-50" title="Restart">
+                        <RotateCcw size={14} />
+                      </button>
+                      <button onClick={() => handleDelete(service.id)} disabled={actionLoading === service.id} className={`p-1.5 rounded-md hover:bg-red-400/10 disabled:opacity-50 ${confirmDelete === service.id ? "text-red-400 bg-red-400/10" : "text-text-muted hover:text-red-400"}`} title={confirmDelete === service.id ? "Click again to confirm" : "Delete"}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))
           )}

@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, appendFileSync, mkdirSync } from "fs";
 import { join } from "path";
 
 const DATA_DIR = join(import.meta.dir, "../../data");
+const LOGS_DIR = join(DATA_DIR, "service-logs");
 const SERVICES_FILE = join(DATA_DIR, "services.json");
 
 export type ServiceStatus = "running" | "stopped" | "error" | "unknown";
@@ -14,6 +15,7 @@ export interface SystemService {
   cwd?: string;
   logPath?: string;
   status: ServiceStatus;
+  enabled: boolean;
   pid?: number;
   createdAt: string;
   lastStarted?: string;
@@ -68,6 +70,7 @@ export class ServiceStore {
   create(service: Omit<SystemService, "id" | "status" | "createdAt">): SystemService {
     const newService: SystemService = {
       ...service,
+      enabled: service.enabled ?? true,
       id: crypto.randomUUID(),
       status: "unknown",
       createdAt: new Date().toISOString(),
@@ -99,11 +102,37 @@ export class ServiceStore {
     const service = this.get(id);
     if (!service) return false;
 
+    // Check if service is enabled
+    if (service.enabled === false) {
+      this.update(id, { lastError: "Service is disabled" });
+      return false;
+    }
+
     try {
       const { spawn } = await import("child_process");
 
-      // Start the process
-      const proc = spawn("sh", ["-c", service.command], {
+      // Ensure logs directory exists
+      if (!existsSync(LOGS_DIR)) {
+        mkdirSync(LOGS_DIR, { recursive: true });
+      }
+
+      // Determine log path - use service-specific log or create default
+      const logPath = service.logPath || join(LOGS_DIR, `${service.name}.log`);
+
+      // Ensure log file exists
+      if (!existsSync(logPath)) {
+        writeFileSync(logPath, "", "utf-8");
+      }
+
+      // Append start marker to log
+      const startMarker = `[${new Date().toISOString()}] Starting: ${service.command}\n`;
+      appendFileSync(logPath, startMarker, "utf-8");
+
+      // Wrap command to redirect output to log file (works for both long-running and short-lived commands)
+      const wrappedCommand = `${service.command} >> "${logPath}" 2>> "${logPath}"`;
+
+      // Start the process - use shell redirection for reliable output capture
+      const proc = spawn("sh", ["-c", wrappedCommand], {
         cwd: service.cwd || process.cwd(),
         detached: true,
         stdio: "ignore",
@@ -112,15 +141,16 @@ export class ServiceStore {
       proc.unref();
       const pid = proc.pid;
 
-      // Update service status
+      // Update service status with log path
       this.update(id, {
         status: "running",
         pid,
+        logPath: logPath,
         lastStarted: new Date().toISOString(),
         lastError: undefined,
       });
 
-      console.log(`[ServiceStore] Started service ${service.name} with PID ${pid}`);
+      console.log(`[ServiceStore] Started service ${service.name} with PID ${pid}, log: ${logPath}`);
       return true;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -190,6 +220,7 @@ export class ServiceStore {
     // Try default log locations if no logPath specified
     if (!logPath) {
       const possiblePaths = [
+        join(LOGS_DIR, `${service.name}.log`),
         `/var/log/${service.name}.log`,
         `/var/log/${service.name}`,
         join(process.cwd(), `${service.name}.log`),
@@ -204,7 +235,7 @@ export class ServiceStore {
     }
 
     if (!logPath) {
-      return `[No log file found for ${service.name}]`;
+      return `[No log file found for ${service.name}]\n\nLog will be created at:\n${join(LOGS_DIR, `${service.name}.log`)}\n\nStart the service to generate logs.`;
     }
 
     try {

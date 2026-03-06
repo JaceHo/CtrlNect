@@ -198,6 +198,28 @@ export function createApiRoutes(
     return c.json(service, 201);
   });
 
+  api.put("/services/:id", async (c) => {
+    if (!serviceStore) return c.json({ error: "Service store not available" }, 503);
+    const id = c.req.param("id");
+    const body = (await c.req.json()) as {
+      name?: string;
+      description?: string;
+      command?: string;
+      cwd?: string;
+      logPath?: string;
+    };
+    const service = serviceStore.get(id);
+    if (!service) {
+      return c.json({ error: "Service not found" }, 404);
+    }
+    // Stop service if running before updating
+    if (service.status === "running") {
+      serviceStore.stopService(id);
+    }
+    const updated = serviceStore.update(id, body);
+    return c.json(updated);
+  });
+
   api.get("/services/discover", async (c) => {
     if (!serviceStore) return c.json({ error: "Service store not available" }, 503);
     const discovered = await serviceStore.discoverServices();

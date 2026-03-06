@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 export interface SystemService {
   id: string;
@@ -8,6 +8,7 @@ export interface SystemService {
   cwd?: string;
   logPath?: string;
   status: "running" | "stopped" | "error" | "unknown";
+  enabled: boolean;
   pid?: number;
   createdAt: string;
   lastStarted?: string;
@@ -24,8 +25,23 @@ export interface DiscoveredService {
 export function useServices() {
   const [services, setServices] = useState<SystemService[]>([]);
   const [loading, setLoading] = useState(true);
+  const lastFetchRef = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
 
-  const fetchServices = useCallback(async () => {
+  const fetchServices = useCallback(async (force = false) => {
+    const now = Date.now();
+    // Debounce: don't fetch if we just fetched within 1 second
+    if (!force && now - lastFetchRef.current < 1000) {
+      return;
+    }
+    // Prevent concurrent fetches
+    if (isFetchingRef.current) {
+      return;
+    }
+
+    isFetchingRef.current = true;
+    lastFetchRef.current = now;
+
     try {
       const res = await fetch("/api/services");
       if (res.ok) {
@@ -35,15 +51,28 @@ export function useServices() {
     } catch (err) {
       console.error("[Services] Failed to fetch:", err);
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
     }
   }, []);
 
+  // Smart polling: check running services more frequently
   useEffect(() => {
-    fetchServices();
-    // Refresh every 10 seconds
-    const interval = setInterval(fetchServices, 10000);
-    return () => clearInterval(interval);
+    fetchServices(true);
+
+    // Initial fast poll interval for running services
+    const interval = setInterval(() => {
+      // This will be debounced internally
+      fetchServices();
+    }, 5000);
+
+    // Full refresh every 30 seconds
+    const fullRefresh = setInterval(() => fetchServices(true), 30000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(fullRefresh);
+    };
   }, [fetchServices]);
 
   const createService = useCallback(async (service: {
@@ -71,6 +100,29 @@ export function useServices() {
     }
     return res.ok;
   }, []);
+
+  const updateService = useCallback(async (id: string, updates: {
+    name?: string;
+    description?: string;
+    command?: string;
+    cwd?: string;
+    logPath?: string;
+    enabled?: boolean;
+  }) => {
+    const res = await fetch(`/api/services/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (res.ok) {
+      await fetchServices();
+    }
+    return res.ok;
+  }, [fetchServices]);
+
+  const toggleServiceEnabled = useCallback(async (id: string, enabled: boolean) => {
+    return updateService(id, { enabled });
+  }, [updateService]);
 
   const startService = useCallback(async (id: string) => {
     const res = await fetch(`/api/services/${id}/start`, { method: "POST" });
@@ -116,6 +168,8 @@ export function useServices() {
     services,
     loading,
     createService,
+    updateService,
+    toggleServiceEnabled,
     deleteService,
     startService,
     stopService,

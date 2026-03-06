@@ -27,7 +27,7 @@ function AppInner() {
   const [activeCronId, setActiveCronId] = useState<string | null>(null);
   const activeCron = crons.find((c) => c.id === activeCronId) || null;
   const [showTaskManager, setShowTaskManager] = useState(false);
-  const { services, createService, deleteService, startService, stopService, restartService, getServiceLogs, discoverServices } = useServices();
+  const { services, createService, updateService, toggleServiceEnabled, deleteService, startService, stopService, restartService, getServiceLogs, discoverServices } = useServices();
 
   // Initialize session - runs when sessions finish loading
   useEffect(() => {
@@ -137,6 +137,8 @@ function AppInner() {
           onRestartService={restartService}
           onDeleteService={deleteService}
           onCreateService={createService}
+          onUpdateService={updateService}
+          onToggleServiceEnabled={toggleServiceEnabled}
           onGetServiceLogs={getServiceLogs}
           onDiscoverServices={discoverServices}
         />

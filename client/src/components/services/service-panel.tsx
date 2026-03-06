@@ -1,6 +1,17 @@
-import { useState } from "react";
-import { Terminal, Play, Square, RotateCcw, Trash2, ChevronDown, ChevronRight, FileText, Plus, Search, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Terminal, Play, Square, RotateCcw, Trash2, ChevronDown, ChevronRight, FileText, Plus, Search, Loader2, X, Edit2, ToggleLeft, ToggleRight } from "lucide-react";
 import type { SystemService, DiscoveredService } from "@/hooks/use-services";
+
+const STORAGE_KEY = "webclaude_service_panel_expanded";
+
+function getStoredExpanded(): boolean {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored !== null ? stored === "true" : true;
+  } catch {
+    return true;
+  }
+}
 
 interface ServicePanelProps {
   services: SystemService[];
@@ -9,6 +20,8 @@ interface ServicePanelProps {
   onRestart: (id: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
   onCreate: (service: { name: string; description?: string; command: string; cwd?: string; logPath?: string }) => Promise<boolean>;
+  onUpdate: (id: string, updates: { name?: string; description?: string; command?: string; cwd?: string; logPath?: string }) => Promise<boolean>;
+  onToggleEnabled: (id: string, enabled: boolean) => Promise<boolean>;
   onGetLogs: (id: string) => Promise<string>;
   onDiscover: () => Promise<DiscoveredService[]>;
 }
@@ -20,10 +33,12 @@ export function ServicePanel({
   onRestart,
   onDelete,
   onCreate,
+  onUpdate,
+  onToggleEnabled,
   onGetLogs,
   onDiscover,
 }: ServicePanelProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(getStoredExpanded);
   const [showAdd, setShowAdd] = useState(false);
   const [showLogs, setShowLogs] = useState<string | null>(null);
   const [logsContent, setLogsContent] = useState("");
@@ -32,6 +47,16 @@ export function ServicePanel({
   const [discovered, setDiscovered] = useState<DiscoveredService[]>([]);
   const [loadingDiscover, setLoadingDiscover] = useState(false);
   const [newService, setNewService] = useState({ name: "", description: "", command: "", cwd: "", logPath: "" });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", description: "", command: "", cwd: "", logPath: "" });
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Persist expanded state
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, String(expanded));
+    } catch {}
+  }, [expanded]);
 
   const runningCount = services.filter(s => s.status === "running").length;
 
@@ -63,6 +88,53 @@ export function ServicePanel({
     setShowAdd(false);
   };
 
+  const handleStart = useCallback(async (id: string) => {
+    setActionLoading(id);
+    await onStart(id);
+    setActionLoading(null);
+  }, [onStart]);
+
+  const handleStop = useCallback(async (id: string) => {
+    setActionLoading(id);
+    await onStop(id);
+    setActionLoading(null);
+  }, [onStop]);
+
+  const handleRestart = useCallback(async (id: string) => {
+    setActionLoading(id);
+    await onRestart(id);
+    setActionLoading(null);
+  }, [onRestart]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    if (!confirm("Delete this service?")) return;
+    setActionLoading(id);
+    await onDelete(id);
+    setActionLoading(null);
+  }, [onDelete]);
+
+  const startEdit = (service: SystemService) => {
+    setEditingId(service.id);
+    setEditForm({
+      name: service.name,
+      description: service.description || "",
+      command: service.command,
+      cwd: service.cwd || "",
+      logPath: service.logPath || "",
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({ name: "", description: "", command: "", cwd: "", logPath: "" });
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || !editForm.name || !editForm.command) return;
+    await onUpdate(editingId, editForm);
+    cancelEdit();
+  };
+
   return (
     <div className="border-t border-border">
       <button
@@ -78,55 +150,101 @@ export function ServicePanel({
       {expanded && (
         <div className="px-2 pb-2 space-y-1">
           {services.map((service) => (
-            <div
-              key={service.id}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-bg-hover group"
-            >
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                service.status === "running" ? "bg-green-400" :
-                service.status === "error" ? "bg-red-400" : "bg-text-muted"
-              }`} />
-              <span className="flex-1 text-xs text-text-primary truncate">{service.name}</span>
-              <div className="hidden group-hover:flex items-center gap-0.5">
-                <button
-                  onClick={() => handleViewLogs(service.id)}
-                  className="p-1 rounded text-text-muted hover:text-text-primary"
-                  title="Logs"
+            <div key={service.id}>
+              {editingId === service.id ? (
+                <div className="p-2 bg-bg-tertiary rounded-md space-y-1.5">
+                  <input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    placeholder="Name"
+                    className="w-full px-2 py-1 bg-bg-secondary border border-border rounded text-xs"
+                  />
+                  <input
+                    value={editForm.command}
+                    onChange={(e) => setEditForm({ ...editForm, command: e.target.value })}
+                    placeholder="Command"
+                    className="w-full px-2 py-1 bg-bg-secondary border border-border rounded text-xs font-mono"
+                  />
+                  <input
+                    value={editForm.cwd}
+                    onChange={(e) => setEditForm({ ...editForm, cwd: e.target.value })}
+                    placeholder="Working Directory"
+                    className="w-full px-2 py-1 bg-bg-secondary border border-border rounded text-xs"
+                  />
+                  <div className="flex gap-1">
+                    <button onClick={saveEdit} className="flex-1 px-2 py-1 bg-accent text-bg-primary rounded text-xs">Save</button>
+                    <button onClick={cancelEdit} className="px-2 py-1 bg-bg-tertiary text-text-muted rounded text-xs">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-bg-hover group ${actionLoading === service.id ? "opacity-50" : ""} ${!service.enabled ? "opacity-50" : ""}`}
                 >
-                  <FileText size={11} />
-                </button>
-                {service.status === "running" ? (
                   <button
-                    onClick={() => onStop(service.id)}
-                    className="p-1 rounded text-text-muted hover:text-red-400"
-                    title="Stop"
+                    onClick={() => onToggleEnabled(service.id, !service.enabled)}
+                    className={`flex-shrink-0 ${service.enabled ? "text-green-400" : "text-text-muted"}`}
+                    title={service.enabled ? "Enabled" : "Disabled"}
                   >
-                    <Square size={11} />
+                    {service.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
                   </button>
-                ) : (
-                  <button
-                    onClick={() => onStart(service.id)}
-                    className="p-1 rounded text-text-muted hover:text-green-400"
-                    title="Start"
-                  >
-                    <Play size={11} />
-                  </button>
-                )}
-                <button
-                  onClick={() => onRestart(service.id)}
-                  className="p-1 rounded text-text-muted hover:text-yellow-400"
-                  title="Restart"
-                >
-                  <RotateCcw size={11} />
-                </button>
-                <button
-                  onClick={() => onDelete(service.id)}
-                  className="p-1 rounded text-text-muted hover:text-red-400"
-                  title="Delete"
-                >
-                  <Trash2 size={11} />
-                </button>
-              </div>
+                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    service.status === "running" ? "bg-green-400" :
+                    service.status === "error" ? "bg-red-400" : "bg-text-muted"
+                  }`} />
+                  <span className="flex-1 text-xs text-text-primary truncate">{service.name}</span>
+                  <div className="hidden group-hover:flex items-center gap-0.5">
+                    <button
+                      onClick={() => handleViewLogs(service.id)}
+                      className="p-1 rounded text-text-muted hover:text-text-primary"
+                      title="Logs"
+                    >
+                      <FileText size={11} />
+                    </button>
+                    <button
+                      onClick={() => startEdit(service)}
+                      className="p-1 rounded text-text-muted hover:text-text-primary"
+                      title="Edit"
+                    >
+                      <Edit2 size={11} />
+                    </button>
+                    {service.status === "running" ? (
+                      <button
+                        onClick={() => handleStop(service.id)}
+                        disabled={actionLoading === service.id}
+                        className="p-1 rounded text-text-muted hover:text-red-400 disabled:opacity-50"
+                        title="Stop"
+                      >
+                        <Square size={11} />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleStart(service.id)}
+                        disabled={actionLoading === service.id}
+                        className="p-1 rounded text-text-muted hover:text-green-400 disabled:opacity-50"
+                        title="Start"
+                      >
+                        <Play size={11} />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleRestart(service.id)}
+                      disabled={actionLoading === service.id}
+                      className="p-1 rounded text-text-muted hover:text-yellow-400 disabled:opacity-50"
+                      title="Restart"
+                    >
+                      <RotateCcw size={11} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(service.id)}
+                      disabled={actionLoading === service.id}
+                      className="p-1 rounded text-text-muted hover:text-red-400 disabled:opacity-50"
+                      title="Delete"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
 
@@ -198,11 +316,20 @@ export function ServicePanel({
       {showLogs && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowLogs(null)} />
-          <div className="relative w-[600px] max-h-[60vh] bg-bg-secondary rounded-xl border border-border shadow-2xl flex flex-col">
+          <div className="relative w-[700px] max-h-[70vh] bg-bg-secondary rounded-xl border border-border shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <h3 className="text-sm font-medium">Service Logs</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-medium">Service Logs</h3>
+                <button
+                  onClick={() => handleViewLogs(showLogs)}
+                  className="p-1 rounded text-text-muted hover:text-text-primary"
+                  title="Refresh"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              </div>
               <button onClick={() => setShowLogs(null)} className="p-1 rounded text-text-muted hover:text-text-primary">
-                ✕
+                <X size={14} />
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">

@@ -6,6 +6,20 @@ export type { ContentBlock } from "@webclaude/shared";
 
 export type ChatMessage = PersistedMessage;
 
+// Sub-task status for multi-task management
+export type SubTaskStatus = "pending" | "running" | "completed" | "failed" | "interrupted";
+
+export interface SubTask {
+  id: string;
+  name: string;
+  status: SubTaskStatus;
+  input: string;
+  result?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 // --- Typewriter animation for non-streaming responses ---
 // Characters revealed per animation frame (~16ms)
 const CHARS_PER_FRAME = 12;
@@ -106,6 +120,7 @@ export function useChat(sessionId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [lastCost, setLastCost] = useState<CostInfo | undefined>();
+  const [subTasks, setSubTasks] = useState<SubTask[]>([]);
 
   // Use ref so the WS listener always sees the current sessionId
   const sessionIdRef = useRef(sessionId);
@@ -113,6 +128,42 @@ export function useChat(sessionId: string | null) {
 
   // Keep setMessages available for typewriter
   typewriterSetMessages = setMessages;
+
+  // Listen for sub-task creation and completion events from message processing
+  useEffect(() => {
+    const handleSubTaskCreated = (e: Event) => {
+      const detail = (e as CustomEvent<{ id: string; name: string; input: string }>).detail;
+      setSubTasks((prev) => [...prev, {
+        id: detail.id,
+        name: detail.name,
+        status: "running",
+        input: detail.input,
+        startedAt: new Date().toISOString(),
+      }]);
+    };
+
+    const handleSubTaskCompleted = (e: Event) => {
+      const detail = (e as CustomEvent<{ toolUseId: string; content: string; isError?: boolean }>).detail;
+      setSubTasks((prev) => prev.map((t) =>
+        t.id === detail.toolUseId
+          ? {
+              ...t,
+              status: detail.isError ? "failed" as const : "completed" as const,
+              result: detail.content,
+              completedAt: new Date().toISOString(),
+              error: detail.isError ? detail.content : undefined,
+            }
+          : t
+      ));
+    };
+
+    window.addEventListener("subtask-created", handleSubTaskCreated);
+    window.addEventListener("subtask-completed", handleSubTaskCompleted);
+    return () => {
+      window.removeEventListener("subtask-created", handleSubTaskCreated);
+      window.removeEventListener("subtask-completed", handleSubTaskCompleted);
+    };
+  }, []);
 
   // Subscribe when session changes + load history
   useEffect(() => {
@@ -219,7 +270,55 @@ export function useChat(sessionId: string | null) {
     ws.send({ type: "interrupt", sessionId });
   }, [sessionId, ws]);
 
-  return { messages, streaming, lastCost, sendMessage, interrupt };
+  // Sub-task management
+  const addSubTask = useCallback((input: string) => {
+    const task: SubTask = {
+      id: crypto.randomUUID(),
+      name: `Task ${subTasks.length + 1}`,
+      status: "pending",
+      input,
+    };
+    setSubTasks((prev) => [...prev, task]);
+  }, [subTasks.length]);
+
+  const interruptSubTask = useCallback((taskId: string) => {
+    setSubTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId ? { ...t, status: "interrupted" as SubTaskStatus } : t
+      )
+    );
+    // Also interrupt the main session
+    if (sessionId) {
+      ws.send({ type: "interrupt", sessionId });
+    }
+  }, [sessionId, ws]);
+
+  const retrySubTask = useCallback((taskId: string) => {
+    const task = subTasks.find((t) => t.id === taskId);
+    if (task) {
+      setSubTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, status: "pending" as SubTaskStatus, error: undefined } : t
+        )
+      );
+      // Send the task input as a new message
+      if (sessionId) {
+        ws.send({ type: "chat", sessionId, text: task.input });
+      }
+    }
+  }, [subTasks, sessionId, ws]);
+
+  return {
+    messages,
+    streaming,
+    lastCost,
+    sendMessage,
+    interrupt,
+    subTasks,
+    addSubTask,
+    interruptSubTask,
+    retrySubTask,
+  };
 }
 
 // --- Pure functions below, no hooks ---
@@ -252,6 +351,25 @@ function processAgentEvent(
       const message = e.message as { content: Array<Record<string, unknown>> } | undefined;
       const parentToolUseId = (e.parent_tool_use_id as string | null) ?? null;
       const blocks = extractAssistantBlocks(message?.content);
+
+      // Track Agent tool (sub-task) creation and completion
+      for (const block of blocks) {
+        if (block.type === "tool_use" && block.name === "Agent") {
+          const input = block.input as { prompt?: string; agentId?: string } | undefined;
+          const taskInput = input?.prompt || input?.agentId || "Sub-task";
+          // Dispatch sub-task creation (will be handled by component)
+          window.dispatchEvent(new CustomEvent("subtask-created", {
+            detail: { id: block.id, name: taskInput.slice(0, 40), input: taskInput }
+          }));
+        }
+        // Track sub-task completion (tool_result for Agent tool)
+        if (block.type === "tool_result") {
+          window.dispatchEvent(new CustomEvent("subtask-completed", {
+            detail: { toolUseId: block.toolUseId, content: block.content, isError: block.isError }
+          }));
+        }
+      }
+
       console.log("[Chat] Assistant message, blocks:", blocks.length, "gotStreamEvents:", gotStreamEvents);
 
       if (gotStreamEvents) {
@@ -344,6 +462,14 @@ function extractAssistantBlocks(content: Array<Record<string, unknown>> | undefi
         blocks.push({
           type: "tool_use", id: part.id as string,
           name: part.name as string, input: part.input,
+        });
+        break;
+      case "tool_result":
+        blocks.push({
+          type: "tool_result",
+          toolUseId: part.tool_use_id as string,
+          content: typeof part.content === "string" ? part.content : JSON.stringify(part.content),
+          isError: (part.is_error as boolean) || false,
         });
         break;
     }

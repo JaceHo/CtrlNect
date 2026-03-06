@@ -73,6 +73,7 @@ export function MessageBubble({
             key={i}
             block={block}
             isStreaming={isStreaming && i === mergedBlocks.length - 1}
+            allBlocks={mergedBlocks}
           />
         ))}
       </div>
@@ -95,10 +96,24 @@ export function MessageBubble({
 function BlockRenderer({
   block,
   isStreaming,
+  allBlocks,
 }: {
   block: ContentBlock;
   isStreaming: boolean;
+  allBlocks?: ContentBlock[];
 }) {
+  // Helper to find tool name for tool_result blocks
+  const getToolName = () => {
+    if (block.type === "tool_result" && allBlocks) {
+      const toolUse = allBlocks.find(
+        (b): b is Extract<ContentBlock, { type: "tool_use" }> =>
+          b.type === "tool_use" && b.id === block.toolUseId
+      );
+      return toolUse?.name;
+    }
+    return undefined;
+  };
+
   switch (block.type) {
     case "text":
       return <TextBlock text={block.text} isStreaming={isStreaming} />;
@@ -108,7 +123,11 @@ function BlockRenderer({
       return <ToolUseBlock name={block.name} input={block.input} />;
     case "tool_result":
       return (
-        <ToolResultBlock content={block.content} isError={block.isError} />
+        <ToolResultBlock
+          content={block.content}
+          isError={block.isError}
+          toolName={getToolName()}
+        />
       );
     case "image":
       return (

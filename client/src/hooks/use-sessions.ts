@@ -41,7 +41,8 @@ export function useSessions() {
       body: JSON.stringify(req),
     });
     const session: Session = await res.json();
-    setSessions((prev) => [session, ...prev]);
+    // Don't add here - WebSocket will broadcast session_update and add it
+    // This prevents duplicate sessions
     return session;
   }, []);
 

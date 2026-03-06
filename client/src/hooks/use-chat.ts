@@ -119,25 +119,27 @@ export function useChat(sessionId: string | null) {
     if (!sessionId) return;
     let cancelled = false;
     console.log("[Chat] Subscribing to session", sessionId);
-    setMessages([]);
+
+    // Subscribe to WS first
+    ws.send({ type: "subscribe", sessionId });
+
+    // Reset state
     setStreaming(false);
     setLastCost(undefined);
     gotStreamEvents = false;
     cancelTypewriter();
-    ws.send({ type: "subscribe", sessionId });
 
-    // Load persisted message history
+    // Load persisted message history - but don't clear messages until we have data
     fetch(`/api/sessions/${sessionId}/messages`)
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => {
+        console.log("[Chat] History response status:", r.status);
+        return r.ok ? r.json() : [];
+      })
       .then((history: ChatMessage[]) => {
-        if (cancelled || !history.length) return;
-        console.log("[Chat] Loaded", history.length, "messages from history");
-        setMessages((prev) => {
-          // Merge: history first, then any live messages not in history
-          const historyIds = new Set(history.map((m) => m.id));
-          const live = prev.filter((m) => !historyIds.has(m.id));
-          return [...history, ...live];
-        });
+        console.log("[Chat] Loaded", history.length, "messages from history, session:", sessionId);
+        if (cancelled) return;
+        // Set messages (clear old, use history)
+        setMessages(history);
       })
       .catch((err) => console.error("[Chat] Failed to load history:", err));
 

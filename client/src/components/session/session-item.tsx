@@ -1,6 +1,7 @@
 import { Trash2, Circle } from "lucide-react";
 import type { Session } from "@webclaude/shared";
 import { cn, formatTime, truncate } from "@/lib/utils";
+import { FeishuIcon } from "@/components/icons/feishu-icon";
 
 interface SessionItemProps {
   session: Session;
@@ -15,6 +16,8 @@ export function SessionItem({
   onSelect,
   onDelete,
 }: SessionItemProps) {
+  const isFeishu = !!session.feishuDmInfo;
+
   return (
     <div
       onClick={onSelect}
@@ -23,22 +26,49 @@ export function SessionItem({
         isActive ? "bg-bg-tertiary" : "hover:bg-bg-hover",
       )}
     >
-      <Circle
-        size={6}
-        className={cn(
-          "mt-1.5 flex-shrink-0",
-          session.status === "running" && "fill-running text-running pulse-dot",
-          session.status === "idle" && "fill-text-muted text-text-muted",
-          session.status === "error" && "fill-red-500 text-red-500",
-        )}
-      />
+      {/* Status indicator – Feishu sessions use the brand icon; regular ones a dot */}
+      {isFeishu ? (
+        <span className="mt-[3px] flex-shrink-0 relative">
+          <FeishuIcon size={13} />
+          {/* Small pulse dot overlay when running */}
+          {session.status === "running" && (
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-running pulse-dot" />
+          )}
+          {session.status === "error" && (
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500" />
+          )}
+        </span>
+      ) : (
+        <Circle
+          size={6}
+          className={cn(
+            "mt-1.5 flex-shrink-0",
+            session.status === "running" && "fill-running text-running pulse-dot",
+            session.status === "idle" && "fill-text-muted text-text-muted",
+            session.status === "error" && "fill-red-500 text-red-500",
+          )}
+        />
+      )}
+
       <div className="flex-1 min-w-0">
         <div className="text-sm truncate">{truncate(session.title, 30)}</div>
         <div className="flex items-center gap-2 text-xs text-text-muted mt-0.5">
-          <span>{session.model.replace("claude-", "").split("-")[0]}</span>
+          {isFeishu ? (
+            <>
+              <span className="text-[#00B2B2]">Feishu DM</span>
+              {session.feishuDmInfo?.autoReply && (
+                <span title="Auto-reply enabled" className="text-[10px] opacity-60">
+                  auto
+                </span>
+              )}
+            </>
+          ) : (
+            <span>{session.model.replace("claude-", "").split("-")[0]}</span>
+          )}
           <span>{formatTime(session.lastActivity)}</span>
         </div>
       </div>
+
       <button
         onClick={(e) => {
           e.stopPropagation();

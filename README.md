@@ -2,9 +2,11 @@
 
 # CtrlNect
 
-**Control your AI agents. Connect from anywhere.**
+**Maximum Control · Maximum Connection · Maximum Usage**
 
-A self-hosted web UI for running Claude as an autonomous coding agent — with multi-session management, real-time streaming, scheduled automation, messaging integrations, and full remote access. Powered by the official [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk).
+Self-hosted web control plane for autonomous AI coding agents.<br/>
+Multi-session · Real-time streaming · Cron automation · iTerm2 · WeChat · Feishu · Service manager<br/>
+Works with **Anthropic** and any **OpenAI-compatible API** — bring your own base URL and secret key.
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [Configuration](#configuration) · [API Reference](#api-reference)
 
@@ -14,16 +16,22 @@ A self-hosted web UI for running Claude as an autonomous coding agent — with m
 
 ## Why CtrlNect?
 
-Claude Code is powerful, but it's a CLI tool tied to a single terminal session. CtrlNect gives you the full control plane in a browser:
+AI coding agents are powerful — but a single CLI terminal is a bottleneck. CtrlNect gives you the **full control plane** in a browser, from any device, with everything wired together:
 
-- **Multi-session management** — Run multiple Claude agent sessions simultaneously, switch between them instantly
-- **Persistent history** — Sessions and messages survive page refreshes and server restarts
-- **Real-time streaming** — Watch Claude think, write code, and use tools as it happens
-- **Remote access** — Control your coding agent from any device on your network
-- **Scheduled automation** — Built-in cron scheduler to trigger agent runs on a schedule
-- **Messaging bridge** — Feishu/Lark DM integration: send prompts and receive replies in chat
-- **Service management** — Monitor and control background services from the UI
-- **Full tool access** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Agent, NotebookEdit — all built-in
+| | |
+|---|---|
+| **Multi-session agents** | Run many concurrent agent sessions, each with its own working dir, model, and history |
+| **Real-time streaming** | Token-by-token output — thinking blocks, tool calls, sub-agent events, all live |
+| **Full agentic toolset** | Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Agent (sub-agents), NotebookEdit |
+| **Sub-agent management** | Spawn and observe parallel sub-agents from the UI in real time |
+| **iTerm2 integration** | View and control all live iTerm2 terminal sessions directly from the sidebar |
+| **WeChat Web panel** | Embedded WeChat Web — no popup, preserves login, soft-reload support |
+| **Feishu / Lark bridge** | DM integration: send prompts and receive agent replies inside Feishu chat |
+| **Cron scheduler** | Schedule AI prompt runs or shell commands with standard cron expressions |
+| **Service manager** | Start, stop, restart and monitor background services from the sidebar |
+| **Dual API support** | Anthropic (native) **and** any OpenAI-compatible API with custom base URL + secret key |
+| **Persistent history** | Sessions, messages and logs survive page refreshes and server restarts |
+| **Remote access** | Control your agents from any device on your network |
 
 ## Quick Start
 
@@ -54,9 +62,9 @@ Open **http://localhost:5173** — create a session and start chatting.
 
 Create, switch between, and manage multiple concurrent Claude agent sessions. Each session maintains its own conversation history, working directory, and model selection. Sessions persist across server restarts.
 
-### Built-in Tool Support
+### Full Agentic Toolset + Sub-agent Management
 
-Every session has access to the full Claude Code toolset:
+Every session has access to the complete Claude Code toolset. The `Agent` tool spawns parallel sub-agents — CtrlNect streams their events to the UI in real time so you can observe every sub-task as it executes.
 
 | Tool | Description |
 |------|-------------|
@@ -68,8 +76,16 @@ Every session has access to the full Claude Code toolset:
 | `Glob` | Find files by pattern |
 | `WebSearch` | Search the web |
 | `WebFetch` | Fetch and process web pages |
-| `Agent` | Spawn sub-agents for parallel work |
+| `Agent` | Spawn sub-agents for parallel work (streamed live) |
 | `NotebookEdit` | Edit Jupyter notebooks |
+
+### iTerm2 Session Panel
+
+All live iTerm2 terminal sessions appear in the sidebar with AI-generated titles and working directory. Click any session to view its output and send commands — without leaving the browser.
+
+### WeChat Web Panel
+
+Embedded WeChat Web (`wx.qq.com`) in the right panel — no popup windows. Supports soft reload (preserves login) and opens in a standalone browser tab as fallback.
 
 ### Real-time Streaming
 
@@ -105,10 +121,6 @@ Once configured, messages sent to the bot in Feishu DM are forwarded to the mapp
 ### Service Manager
 
 Monitor and control background services from the sidebar. View status, start/stop services, and see live output — without leaving the browser.
-
-### WeChat Web Panel
-
-Embedded WeChat Web (`wx.qq.com`) in the right panel — no popup windows. Supports soft reload (preserves login) and opens in a standalone browser tab as fallback.
 
 ### Model Switching
 
@@ -345,6 +357,6 @@ GET    /health                           Health check
 
 <div align="center">
 
-Built with the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk)
+Built with the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) · Maximum Control · Maximum Connection · Maximum Usage
 
 </div>

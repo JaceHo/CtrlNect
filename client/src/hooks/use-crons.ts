@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import type { CronJob, CreateCronRequest, UpdateCronRequest } from "@webclaude/shared";
 import { useWSListener } from "./use-websocket";
+import { API_BASE } from "../api";
 
 export function useCrons() {
   const [crons, setCrons] = useState<CronJob[]>([]);
 
   useEffect(() => {
-    fetch("/api/crons")
+    fetch(`${API_BASE}/api/crons`)
       .then((r) => r.json())
       .then((data) => setCrons(data))
       .catch(() => {});
@@ -31,7 +32,7 @@ export function useCrons() {
   );
 
   const createCron = useCallback(async (req: CreateCronRequest) => {
-    const res = await fetch("/api/crons", {
+    const res = await fetch(`${API_BASE}/api/crons`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),

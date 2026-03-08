@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Session, CreateSessionRequest, UpdateSessionRequest } from "@webclaude/shared";
 import { useWSListener } from "./use-websocket";
+import { API_BASE } from "../api";
 
 export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -8,7 +9,7 @@ export function useSessions() {
 
   // Fetch sessions on mount
   useEffect(() => {
-    fetch("/api/sessions")
+    fetch(`${API_BASE}/api/sessions`)
       .then((r) => r.json())
       .then((data) => {
         setSessions(data);
@@ -35,7 +36,7 @@ export function useSessions() {
   );
 
   const createSession = useCallback(async (req: CreateSessionRequest) => {
-    const res = await fetch("/api/sessions", {
+    const res = await fetch(`${API_BASE}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -48,7 +49,7 @@ export function useSessions() {
 
   const updateSession = useCallback(
     async (id: string, req: UpdateSessionRequest) => {
-      const res = await fetch(`/api/sessions/${id}`, {
+      const res = await fetch(`${API_BASE}/api/sessions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),
@@ -59,7 +60,7 @@ export function useSessions() {
   );
 
   const deleteSession = useCallback(async (id: string) => {
-    await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+    await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" });
     setSessions((prev) => prev.filter((s) => s.id !== id));
   }, []);
 

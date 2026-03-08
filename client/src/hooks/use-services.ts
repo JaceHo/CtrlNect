@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { API_BASE } from "../api";
 
 export interface SystemService {
   id: string;
@@ -43,7 +44,7 @@ export function useServices() {
     lastFetchRef.current = now;
 
     try {
-      const res = await fetch("/api/services");
+      const res = await fetch(`${API_BASE}/api/services`);
       if (res.ok) {
         const data = await res.json();
         setServices(data);
@@ -82,7 +83,7 @@ export function useServices() {
     cwd?: string;
     logPath?: string;
   }) => {
-    const res = await fetch("/api/services", {
+    const res = await fetch(`${API_BASE}/api/services`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(service),
@@ -157,7 +158,7 @@ export function useServices() {
   }, []);
 
   const discoverServices = useCallback(async (): Promise<DiscoveredService[]> => {
-    const res = await fetch("/api/services/discover");
+    const res = await fetch(`${API_BASE}/api/services/discover`);
     if (res.ok) {
       return res.json();
     }

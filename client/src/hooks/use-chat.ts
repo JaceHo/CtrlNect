@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useWS, useWSListener } from "./use-websocket";
 import type { ServerMessage, CostInfo, ImageData, ContentBlock, PersistedMessage } from "@webclaude/shared";
+import { API_BASE } from "../api";
 
 export type { ContentBlock } from "@webclaude/shared";
 
@@ -181,7 +182,7 @@ export function useChat(sessionId: string | null) {
     cancelTypewriter();
 
     // Load persisted message history - but don't clear messages until we have data
-    fetch(`/api/sessions/${sessionId}/messages`)
+    fetch(`${API_BASE}/api/sessions/${sessionId}/messages`)
       .then((r) => {
         console.log("[Chat] History response status:", r.status);
         return r.ok ? r.json() : [];

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { ArrowLeft, CheckCircle, XCircle, Loader2, Play, Clock, Zap } from "lucide-react";
 import type { CronJob, CronRunLog, Session } from "@webclaude/shared";
+import { API_BASE } from "../../api";
 
 interface CronLogViewProps {
   cron: CronJob;
@@ -43,7 +44,7 @@ export function CronLogView({ cron, sessions, onBack, onTrigger }: CronLogViewPr
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/crons/${cron.id}/logs`)
+    fetch(`${API_BASE}/api/crons/${cron.id}/logs`)
       .then((r) => r.json())
       .then((data) => {
         setLogs(data);
@@ -55,7 +56,7 @@ export function CronLogView({ cron, sessions, onBack, onTrigger }: CronLogViewPr
   // Refresh logs when cron status changes (e.g. run completes)
   useEffect(() => {
     if (cron.lastRun) {
-      fetch(`/api/crons/${cron.id}/logs`)
+      fetch(`${API_BASE}/api/crons/${cron.id}/logs`)
         .then((r) => r.json())
         .then((data) => setLogs(data))
         .catch(() => {});

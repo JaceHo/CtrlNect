@@ -148,12 +148,13 @@ Browser (React + Vite)            Server (Bun + Hono)           Claude Agent SDK
 │  Tool Visualization   │  REST  │  Agent Runner      │        │  (per query)  │
 │  Cron Scheduler UI    │◄──────►│  Session Store     │        └──────────────┘
 │  Service Manager UI   │        │  Message Store     │              │
-│  Feishu Status        │        │  Cron Store        │              ▼
+│  Feishu Status        │        │  Cron Store        │              ▼ ANTHROPIC_BASE_URL
 │  WeChat Embed         │        │  Cron Scheduler    │        Anthropic API
-└──────────────────────┘        │  Service Store     │
+└──────────────────────┘        │  Service Store     │           ── or ──
                                   │  Feishu Bridge     │◄──────► Feishu API
                                   │  iTerm2 Bridge     │◄──────► iTerm2
-                                  └───────────────────┘
+                                  │  OpenAI Proxy      │◄──────► OpenAI-compatible API
+                                  └───────────────────┘         (gpt-4o, Groq, Azure…)
 ```
 
 **Monorepo structure:**
@@ -200,11 +201,32 @@ The Agent SDK manages the full Claude Code subprocess lifecycle — tool executi
 
 ### API Provider
 
-CtrlNect supports two API providers, auto-detected from your shell environment:
+CtrlNect supports both Anthropic and any OpenAI-compatible API, auto-detected from your environment:
 
 **Priority chain:**
 1. **Anthropic** (default) — if `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set
 2. **OpenAI-compatible** (fallback) — if only `OPENAI_API_KEY` is set
+
+### OpenAI-compatible API Support
+
+CtrlNect includes a built-in inline proxy that transparently translates between the Anthropic Messages API format (used by the Claude Agent SDK internally) and the OpenAI Chat Completions format. **No external proxy (LiteLLM, etc.) needed.**
+
+```bash
+# Use OpenAI directly
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-4o"           # default: gpt-4o
+
+# Use any OpenAI-compatible endpoint (Azure, Groq, Together, Ollama, etc.)
+export OPENAI_API_KEY="..."
+export OPENAI_BASE_URL="https://api.groq.com/openai/v1"
+export OPENAI_MODEL="llama-3.3-70b-versatile"
+```
+
+When `OPENAI_API_KEY` is set (and no Anthropic key), CtrlNect starts a local translation proxy on `127.0.0.1:19876` that:
+- Receives Anthropic-format requests from the Claude Agent SDK
+- Translates messages, tools, and streaming SSE format to OpenAI format
+- Forwards to your configured OpenAI endpoint
+- Translates the response (including streaming tool calls) back to Anthropic format
 
 ### Environment Variables
 
@@ -215,9 +237,10 @@ export ANTHROPIC_BASE_URL="https://api.anthropic.com"  # optional
 
 # Option 2: OpenAI-compatible API
 export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="https://api.openai.com/v1"     # optional
+export OPENAI_BASE_URL="https://api.openai.com/v1"     # optional, defaults to OpenAI
+export OPENAI_MODEL="gpt-4o"                           # optional, defaults to gpt-4o
 
-# Server port (optional)
+# Server port
 export PORT=3001
 ```
 
@@ -226,8 +249,9 @@ export PORT=3001
 | `ANTHROPIC_API_KEY` | Yes* | Anthropic API key (`sk-ant-...`) |
 | `ANTHROPIC_AUTH_TOKEN` | Yes* | Or Claude subscription token (`cr_...`) |
 | `ANTHROPIC_BASE_URL` | No | Custom Anthropic-compatible endpoint |
-| `OPENAI_API_KEY` | No | OpenAI API key (used if no Anthropic key set) |
-| `OPENAI_BASE_URL` | No | Custom OpenAI-compatible endpoint |
+| `OPENAI_API_KEY` | Yes* | OpenAI or compatible API key |
+| `OPENAI_BASE_URL` | No | OpenAI-compatible base URL (default: `https://api.openai.com/v1`) |
+| `OPENAI_MODEL` | No | Model to use in OpenAI mode (default: `gpt-4o`) |
 | `PORT` | No | Server port (default: `3001`) |
 
 *One of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `OPENAI_API_KEY` is required.
@@ -235,10 +259,6 @@ export PORT=3001
 ### UI Toggle
 
 The header shows the active provider as a badge (`Anthropic` / `OpenAI`). Click it to switch at runtime — takes effect for new agent runs. Green = API key detected, red = missing.
-
-### Proxy Support
-
-Point `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` to any compatible proxy (LiteLLM, OpenRouter, custom gateway).
 
 ### Default Working Directory
 

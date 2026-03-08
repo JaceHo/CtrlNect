@@ -1,5 +1,6 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { CostInfo } from "@ctrlnect/shared";
+import { startOpenAIProxy, stopOpenAIProxy } from "./openai-proxy.js";
 
 interface RunningSession {
   query: Query;
@@ -97,11 +98,15 @@ function buildSDKEnv(): Record<string, string> {
       if (k.startsWith("ANTHROPIC_") && v && !env[k]) env[k] = v;
     }
   } else {
-    // OpenAI mode: map OPENAI_* env vars to ANTHROPIC_* for the SDK
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+    // OpenAI mode: start local proxy that translates Anthropic↔OpenAI format,
+    // then point the SDK at the proxy so the claude CLI never knows the difference.
+    const apiKey = process.env.OPENAI_API_KEY || "";
     const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-    env.ANTHROPIC_BASE_URL = baseUrl;
+    const targetModel = process.env.OPENAI_MODEL || "gpt-4o";
+
+    const proxyPort = startOpenAIProxy(baseUrl, apiKey, targetModel);
+    env.ANTHROPIC_API_KEY = apiKey || "openai-proxy"; // SDK requires a non-empty key
+    env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${proxyPort}`;
   }
 
   return env;
@@ -312,5 +317,6 @@ export class AgentRunner {
       session.query.close();
     }
     this.running.clear();
+    stopOpenAIProxy();
   }
 }

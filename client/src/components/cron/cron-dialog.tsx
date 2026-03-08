@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X } from "lucide-react";
+import { X, BotMessageSquare, Terminal } from "lucide-react";
 import type { CronJob, Session, CreateCronRequest, UpdateCronRequest } from "@webclaude/shared";
 
 const PRESETS = [
@@ -28,6 +28,7 @@ export function CronDialog({
   onCreate,
   onUpdate,
 }: CronDialogProps) {
+  const [type, setType] = useState<"prompt" | "command">("prompt");
   const [name, setName] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [schedule, setSchedule] = useState("*/5 * * * *");
@@ -36,12 +37,14 @@ export function CronDialog({
 
   useEffect(() => {
     if (editingCron) {
+      setType(editingCron.type ?? "prompt");
       setName(editingCron.name);
       setSessionId(editingCron.sessionId);
       setSchedule(editingCron.schedule);
       setPrompt(editingCron.prompt);
       setEnabled(editingCron.enabled);
     } else {
+      setType("prompt");
       setName("");
       setSessionId(sessions[0]?.id ?? "");
       setSchedule("*/5 * * * *");
@@ -52,14 +55,17 @@ export function CronDialog({
 
   if (!open) return null;
 
+  const isCommand = type === "command";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !sessionId || !schedule.trim() || !prompt.trim()) return;
+    const isValid = name.trim() && schedule.trim() && prompt.trim() && (isCommand || sessionId);
+    if (!isValid) return;
 
     if (editingCron) {
-      await onUpdate(editingCron.id, { name, sessionId, schedule, prompt, enabled });
+      await onUpdate(editingCron.id, { type, name, sessionId: isCommand ? "" : sessionId, schedule, prompt, enabled });
     } else {
-      await onCreate({ name, sessionId, schedule, prompt, enabled });
+      await onCreate({ type, name, sessionId: isCommand ? "" : sessionId, schedule, prompt, enabled });
     }
     onClose();
   };
@@ -80,32 +86,72 @@ export function CronDialog({
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
+
+          {/* Type toggle */}
+          {!editingCron && (
+            <div>
+              <label className="block text-xs text-text-secondary mb-1.5">Type</label>
+              <div className="flex rounded-md border border-border overflow-hidden text-xs">
+                <button
+                  type="button"
+                  onClick={() => setType("prompt")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 transition-colors ${
+                    !isCommand ? "bg-text-primary text-bg-primary" : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  <BotMessageSquare size={13} />
+                  AI Prompt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType("command")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 transition-colors border-l border-border ${
+                    isCommand ? "bg-text-primary text-bg-primary" : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  <Terminal size={13} />
+                  Shell Command
+                </button>
+              </div>
+              <p className="mt-1 text-[10px] text-text-muted">
+                {isCommand
+                  ? "Runs a shell command on schedule — synced to system crontab."
+                  : "Sends a prompt to Claude in the selected session."}
+              </p>
+            </div>
+          )}
+
+          {/* Name */}
           <div>
             <label className="block text-xs text-text-secondary mb-1">Name</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Daily summary"
+              placeholder={isCommand ? "e.g. Nightly backup" : "e.g. Daily summary"}
               className="w-full px-3 py-2 text-sm bg-bg-secondary border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-text-muted"
             />
           </div>
 
-          <div>
-            <label className="block text-xs text-text-secondary mb-1">Session</label>
-            <select
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-bg-secondary border border-border rounded-md text-text-primary focus:outline-none focus:border-text-muted"
-            >
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.title}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Session — only for prompt type */}
+          {!isCommand && (
+            <div>
+              <label className="block text-xs text-text-secondary mb-1">Session</label>
+              <select
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-bg-secondary border border-border rounded-md text-text-primary focus:outline-none focus:border-text-muted"
+              >
+                {sessions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
+          {/* Schedule */}
           <div>
             <label className="block text-xs text-text-secondary mb-1">Schedule (cron expression)</label>
             <input
@@ -133,17 +179,23 @@ export function CronDialog({
             </div>
           </div>
 
+          {/* Prompt / Command */}
           <div>
-            <label className="block text-xs text-text-secondary mb-1">Prompt</label>
+            <label className="block text-xs text-text-secondary mb-1">
+              {isCommand ? "Shell Command" : "Prompt"}
+            </label>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="What should Claude do?"
+              placeholder={isCommand ? "/usr/local/bin/backup.sh --quiet" : "What should Claude do?"}
               rows={3}
-              className="w-full px-3 py-2 text-sm bg-bg-secondary border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-text-muted resize-none"
+              className={`w-full px-3 py-2 text-sm bg-bg-secondary border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-text-muted resize-none ${
+                isCommand ? "font-mono" : ""
+              }`}
             />
           </div>
 
+          {/* Enabled toggle */}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -158,7 +210,12 @@ export function CronDialog({
                 }`}
               />
             </button>
-            <span className="text-xs text-text-secondary">Enabled</span>
+            <span className="text-xs text-text-secondary">
+              {enabled ? "Enabled" : "Disabled"}
+              {isCommand && enabled && (
+                <span className="ml-1 text-text-muted">(will appear in system crontab)</span>
+              )}
+            </span>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

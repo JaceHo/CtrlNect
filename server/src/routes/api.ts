@@ -8,6 +8,7 @@ import type { CreateSessionRequest, UpdateSessionRequest, CreateCronRequest, Upd
 import { AVAILABLE_MODELS } from "@webclaude/shared";
 import type { CronStore } from "../cron-store.js";
 import type { CronScheduler } from "../cron-scheduler.js";
+import { readImportableEntries, syncCommandCrons } from "../crontab-service.js";
 import type { ServiceStore } from "../service-store.js";
 import { detectApiProvider, setPreferredProvider, type ApiProvider } from "../agent-runner.js";
 
@@ -86,6 +87,19 @@ export function createApiRoutes(
 
   // ── Feishu integration routes ───────────────────────────────────────────────
 
+  /** GET /api/feishu/session/:id/history – load older messages from Feishu. */
+  api.get("/feishu/session/:id/history", async (c) => {
+    if (!feishuBridge) return c.json({ error: "Feishu not enabled" }, 503);
+    const sessionId = c.req.param("id");
+    const beforeTime = parseInt(c.req.query("before_time") || String(Date.now()));
+    try {
+      await feishuBridge.loadHistoryBefore(sessionId, beforeTime);
+    } catch (err) {
+      return c.json({ error: String(err) }, 500);
+    }
+    return c.json(messageStore.getAll(sessionId));
+  });
+
   /** GET /api/feishu/status – returns bridge status or disabled notice. */
   api.get("/feishu/status", (c) => {
     if (!feishuBridge) {
@@ -129,12 +143,21 @@ export function createApiRoutes(
   api.post("/crons", async (c) => {
     if (!cronStore || !cronScheduler) return c.json({ error: "Crons not available" }, 503);
     const body = (await c.req.json()) as CreateCronRequest;
-    if (!body.sessionId || !body.name || !body.schedule || !body.prompt) {
-      return c.json({ error: "sessionId, name, schedule, and prompt are required" }, 400);
+    const isCommand = body.type === "command";
+    if (!body.name || !body.schedule || !body.prompt) {
+      return c.json({ error: "name, schedule, and prompt are required" }, 400);
+    }
+    if (!isCommand && !body.sessionId) {
+      return c.json({ error: "sessionId is required for prompt-type crons" }, 400);
     }
     const cron = cronStore.create(body);
     cronScheduler.refreshNextRun(cron.id);
     connectionManager.broadcastAll({ type: "cron_update", cron: cronStore.get(cron.id)! });
+    // Sync command crons to system crontab
+    if (isCommand) {
+      const commandCrons = cronStore.getAll().filter((c) => c.type === "command");
+      await syncCommandCrons(commandCrons).catch((e) => console.warn("[crontab] sync failed:", e));
+    }
     return c.json(cron, 201);
   });
 
@@ -143,19 +166,67 @@ export function createApiRoutes(
     const body = (await c.req.json()) as UpdateCronRequest;
     const cron = cronStore.update(c.req.param("id"), body);
     if (!cron) return c.json({ error: "Not found" }, 404);
-    // Refresh nextRun if schedule or enabled changed
     if (body.schedule !== undefined || body.enabled !== undefined) {
       cronScheduler.refreshNextRun(cron.id);
     }
     connectionManager.broadcastAll({ type: "cron_update", cron: cronStore.get(cron.id)! });
+    // Sync command crons after any update
+    if (cron.type === "command" || body.type === "command") {
+      const commandCrons = cronStore.getAll().filter((c) => c.type === "command");
+      await syncCommandCrons(commandCrons).catch((e) => console.warn("[crontab] sync failed:", e));
+    }
     return c.json(cronStore.get(cron.id));
   });
 
-  api.delete("/crons/:id", (c) => {
+  api.delete("/crons/:id", async (c) => {
     if (!cronStore) return c.json({ error: "Crons not available" }, 503);
+    const cron = cronStore.get(c.req.param("id"));
+    const wasCommand = cron?.type === "command";
     const deleted = cronStore.delete(c.req.param("id"));
     if (!deleted) return c.json({ error: "Not found" }, 404);
+    // Sync to remove entry from system crontab
+    if (wasCommand) {
+      const commandCrons = cronStore.getAll().filter((c) => c.type === "command");
+      await syncCommandCrons(commandCrons).catch((e) => console.warn("[crontab] sync failed:", e));
+    }
     return c.json({ ok: true });
+  });
+
+  // Read importable (user-owned) system crontab entries
+  api.get("/crons/system", async (c) => {
+    const entries = await readImportableEntries().catch(() => []);
+    return c.json(entries);
+  });
+
+  // Import all user-owned system crontab entries as command crons (idempotent)
+  api.post("/crons/import-system", async (c) => {
+    if (!cronStore || !cronScheduler) return c.json({ error: "Crons not available" }, 503);
+    const entries = await readImportableEntries().catch(() => []);
+    const existing = cronStore.getAll();
+    const created = [];
+    for (const entry of entries) {
+      // Skip if a command cron with the same command already exists (idempotent)
+      const duplicate = existing.find(
+        (c) => c.type === "command" && c.prompt === entry.command,
+      );
+      if (duplicate) continue;
+      const name = entry.command.split(" ").pop()?.split("/").pop() ?? entry.command.slice(0, 30);
+      const cron = cronStore.create({
+        type: "command",
+        sessionId: "",
+        name,
+        schedule: entry.schedule,
+        prompt: entry.command,
+        enabled: true,
+      });
+      cronScheduler.refreshNextRun(cron.id);
+      connectionManager.broadcastAll({ type: "cron_update", cron: cronStore.get(cron.id)! });
+      created.push(cron);
+    }
+    // Re-sync after batch import (marks them all as managed)
+    const commandCrons = cronStore.getAll().filter((c) => c.type === "command");
+    await syncCommandCrons(commandCrons).catch((e) => console.warn("[crontab] sync failed:", e));
+    return c.json({ imported: created.length, crons: created }, 201);
   });
 
   api.get("/crons/:id/logs", (c) => {
@@ -264,6 +335,90 @@ export function createApiRoutes(
     const deleted = serviceStore.delete(c.req.param("id"));
     if (!deleted) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
+  });
+
+  // ── iTerm2 routes — served by the internal iterm_bridge.py subprocess ────────
+  // No auth needed: the bridge binds to 127.0.0.1 (loopback only).
+
+  const BRIDGE = `http://127.0.0.1:${process.env.ITERM_BRIDGE_PORT || "8765"}`;
+
+  async function bridgeFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(`${BRIDGE}${path}`, init);
+  }
+
+  api.get("/iterm/sessions", async (c) => {
+    try {
+      const res = await bridgeFetch("/sessions");
+      if (!res.ok) return c.json({ sessions: [], error: "bridge unavailable" }, 200);
+      return c.json(await res.json());
+    } catch (e) {
+      return c.json({ sessions: [], error: String(e) }, 200);
+    }
+  });
+
+  api.get("/iterm/session/:id/content", async (c) => {
+    const id = c.req.param("id");
+    const lines = c.req.query("lines") || "120";
+    try {
+      const res = await bridgeFetch(`/session/${id}/content?lines=${lines}`);
+      if (!res.ok) return c.json({ error: "bridge error" }, res.status as 404 | 500);
+      return c.json(await res.json());
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  api.post("/iterm/session/:id/send", async (c) => {
+    const id = c.req.param("id");
+    const body = (await c.req.json()) as { text: string };
+    try {
+      const res = await bridgeFetch(`/session/${id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: body.text }),
+      });
+      if (!res.ok) return c.json({ error: "bridge error" }, res.status as 404 | 500);
+      return c.json(await res.json());
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // AI summary title — fetch terminal content then ask aiserv
+  api.get("/iterm/session/:id/title", async (c) => {
+    const id = c.req.param("id");
+    const sessionName = c.req.query("name") || "";
+    try {
+      const contentRes = await bridgeFetch(`/session/${id}/content?lines=30`);
+      if (!contentRes.ok) return c.json({ title: sessionName }, 200);
+      const contentData = (await contentRes.json()) as { content?: string };
+      const rawContent = (contentData.content || "").trim();
+      if (!rawContent) return c.json({ title: sessionName || "Empty session" }, 200);
+
+      const aiRes = await fetch("http://127.0.0.1:4000/v1/messages", {
+        method: "POST",
+        signal: AbortSignal.timeout(8000), // don't hang if aiserv is slow
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "sk-aiserv-local",
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku",
+          max_tokens: 30,
+          messages: [{
+            role: "user",
+            content: `Terminal session "${sessionName}" recent output:\n\`\`\`\n${rawContent.slice(-800)}\n\`\`\`\n\nRespond with ONLY a concise 3-6 word task description (no punctuation). Examples: "Running bun dev server", "Git push proxyserv repo", "Claude Code coding session"`,
+          }],
+        }),
+      });
+      if (aiRes.ok) {
+        const aiData = (await aiRes.json()) as { content?: { type: string; text: string }[] };
+        const title = aiData.content?.[0]?.text?.trim().slice(0, 50) || sessionName;
+        return c.json({ title });
+      }
+    } catch {}
+    return c.json({ title: sessionName }, 200);
   });
 
   // ── API config routes ──────────────────────────────────────────────────────

@@ -1,17 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
 import type { CronJob, CreateCronRequest, UpdateCronRequest } from "@webclaude/shared";
-import { useWSListener } from "./use-websocket";
+import { useWS, useWSListener } from "./use-websocket";
 import { API_BASE } from "../api";
 
 export function useCrons() {
   const [crons, setCrons] = useState<CronJob[]>([]);
+  const ws = useWS();
 
-  useEffect(() => {
+  const fetchCrons = useCallback(() => {
     fetch(`${API_BASE}/api/crons`)
       .then((r) => r.json())
       .then((data) => setCrons(data))
       .catch(() => {});
   }, []);
+
+  // Fetch on mount
+  useEffect(() => { fetchCrons(); }, [fetchCrons]);
+
+  // Re-fetch whenever the WebSocket reconnects (server restart recovery)
+  useEffect(() => ws.onConnect(fetchCrons), [ws, fetchCrons]);
 
   useWSListener(
     useCallback((msg: { type: string; cron?: CronJob; crons?: CronJob[] }) => {
@@ -58,5 +65,17 @@ export function useCrons() {
     await fetch(`/api/crons/${id}/trigger`, { method: "POST" });
   }, []);
 
-  return { crons, createCron, updateCron, deleteCron, triggerCron };
+  const importSystemCrons = useCallback(async (): Promise<{ imported: number }> => {
+    const res = await fetch(`${API_BASE}/api/crons/import-system`, { method: "POST" });
+    const result = await res.json() as { imported: number; crons?: CronJob[] };
+    if (result.crons?.length) {
+      setCrons((prev) => {
+        const newIds = new Set(result.crons!.map((c) => c.id));
+        return [...prev.filter((c) => !newIds.has(c.id)), ...result.crons!];
+      });
+    }
+    return { imported: result.imported };
+  }, []);
+
+  return { crons, createCron, updateCron, deleteCron, triggerCron, importSystemCrons };
 }

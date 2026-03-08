@@ -1,6 +1,7 @@
 import type { CronStore } from "./cron-store.js";
 import type { ConnectionManager } from "./connection-manager.js";
 import type { CronJob, CronRunLog } from "@webclaude/shared";
+import { runShellCommand } from "./crontab-service.js";
 
 // Minimal cron expression parser supporting:
 // * (every), */N (every N), N (exact match), N,M (list)
@@ -115,8 +116,6 @@ export class CronScheduler {
   }
 
   private async executeCron(cron: CronJob, trigger: "schedule" | "manual" = "schedule") {
-    if (!this.onTrigger) return;
-
     const log: CronRunLog = {
       id: crypto.randomUUID(),
       cronId: cron.id,
@@ -124,16 +123,28 @@ export class CronScheduler {
       startedAt: new Date().toISOString(),
       endedAt: null,
       error: null,
+      output: null,
       trigger,
     };
 
-    // Update status to running and save initial log
     this.cronStore.update(cron.id, { status: "running" });
     this.cronStore.appendLog(log);
     this.broadcastCronUpdate(cron.id);
 
     try {
-      await this.onTrigger(cron);
+      if (cron.type === "command") {
+        // Execute shell command directly
+        const { output, exitCode } = await runShellCommand(cron.prompt);
+        log.output = output || null;
+        if (exitCode !== 0) {
+          throw new Error(`Exit code ${exitCode}${output ? `\n${output}` : ""}`);
+        }
+      } else {
+        // Execute as AI prompt via Claude session
+        if (!this.onTrigger) throw new Error("No prompt trigger handler set");
+        await this.onTrigger(cron);
+      }
+
       log.status = "success";
       log.endedAt = new Date().toISOString();
       this.cronStore.update(cron.id, {

@@ -20,6 +20,7 @@ export class CronStore {
         const data = JSON.parse(readFileSync(CRONS_FILE, "utf-8"));
         for (const c of data) {
           if (c.status === "running") c.status = "idle";
+          if (!c.type) c.type = "prompt"; // back-fill legacy entries
           this.crons.set(c.id, c);
         }
       }
@@ -53,7 +54,8 @@ export class CronStore {
   }
 
   create(partial: {
-    sessionId: string;
+    type?: "prompt" | "command";
+    sessionId?: string;
     name: string;
     schedule: string;
     prompt: string;
@@ -62,7 +64,8 @@ export class CronStore {
     const id = crypto.randomUUID();
     const cron: CronJob = {
       id,
-      sessionId: partial.sessionId,
+      type: partial.type ?? "prompt",
+      sessionId: partial.sessionId ?? "",
       name: partial.name,
       schedule: partial.schedule,
       prompt: partial.prompt,
